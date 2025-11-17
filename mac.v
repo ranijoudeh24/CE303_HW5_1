@@ -1,7 +1,7 @@
 // mac4x4_mac9.v
 `timescale 1ns/1ps
 
-module mac (
+module mac4x4_mac9 (
     input  wire               clk,
     input  wire               rstb,           // active-low async reset
     input  wire signed [3:0]  IN,             // signed 4-bit input
