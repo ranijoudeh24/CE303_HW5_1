@@ -1,67 +1,56 @@
-// mac.v
+// mac4x4_mac9.v
 `timescale 1ns/1ps
 
 module mac (
-    input  wire                 clk,
-    input  wire                 rstb,         // active-low reset
-    input  wire signed  [3:0]   IN,          // signed 4-bit input
-    input  wire signed  [3:0]   W,           // signed 4-bit weight
-    output reg  signed [11:0]   OUT          // signed 12-bit output
+    input  wire               clk,
+    input  wire               rstb,           // active-low async reset
+    input  wire signed [3:0]  IN,             // signed 4-bit input
+    input  wire signed [3:0]  W,              // signed 4-bit weight
+    output reg  signed [11:0] OUT             // signed 12-bit output
 );
+    // Stage 0: register inputs (pipeline)
+    reg signed [3:0] in_r, w_r;
 
-    // Pipeline registers
-    reg signed [3:0]  in_reg;        // stage 0: registered IN
-    reg signed [3:0]  w_reg;         // stage 0: registered W
-    reg signed [7:0]  mul_reg;       // stage 1: product of in_reg * w_reg
-    reg signed [11:0] acc_reg;       // stage 2: accumulator
+    // Stage 1: multiply and register product (signed 8-bit)
+    wire signed [7:0] prod_w = in_r * w_r;
+    reg  signed [7:0] prod_r;
 
-    // 4-bit counter to count 0..8 (9 products)
-    reg [3:0] cnt;
+    // Stage 2: 9-cycle accumulator and cycle counter
+    reg  [3:0]        cyc9;                   // counts 0..8
+    reg  signed [11:0] acc;                   // wide enough for 9*max(|prod|)
+                                              // max |prod| = 64 -> 9*64 = 576 < 2^10
 
-    // sign-extend multiplier output to 12 bits
-    wire signed [11:0] mul_ext = {{4{mul_reg[7]}}, mul_reg};
-
-    // combinational next value of accumulator
-    reg signed [11:0] acc_next;
-
+    // Pipeline + accumulator
     always @(posedge clk or negedge rstb) begin
         if (!rstb) begin
-            // async reset: everything to 0
-            in_reg  <= 4'sd0;
-            w_reg   <= 4'sd0;
-            mul_reg <= 8'sd0;
-            acc_reg <= 12'sd0;
-            OUT     <= 12'sd0;
-            cnt     <= 4'd0;
+            in_r   <= '0;
+            w_r    <= '0;
+            prod_r <= '0;
+            acc    <= '0;
+            cyc9   <= 4'd0;
+            OUT    <= '0;
         end else begin
-            // Stage 0: register inputs
-            in_reg  <= IN;
-            w_reg   <= W;
+            // Stage 0
+            in_r   <= IN;
+            w_r    <= W;
 
-            // Stage 1: multiplier pipeline
-            mul_reg <= in_reg * w_reg;  // signed multiply
+            // Stage 1
+            prod_r <= prod_w;
 
-            // Stage 2: accumulator (9 products per window)
-            if (cnt == 4'd0) begin
-                // start a new accumulation window
-                acc_next = mul_ext;
+            // Stage 2: accumulate over 9 cycles, then output and restart
+            if (cyc9 == 4'd0) begin
+                acc <= {{4{prod_r[7]}}, prod_r};   // sign-extend 8->12 and start from 0 + prod
             end else begin
-                acc_next = acc_reg + mul_ext;
+                acc <= acc + {{4{prod_r[7]}}, prod_r};
             end
 
-            acc_reg <= acc_next;
-
-            // Stage 3: output register
-            if (cnt == 4'd8) begin
-                // after 9th product, capture result and restart count
-                OUT <= acc_next;
-                cnt <= 4'd0;
+            // Roll the 0..8 counter and update OUT when finishing a window
+            if (cyc9 == 4'd8) begin
+                OUT  <= acc;        // register final sum
+                cyc9 <= 4'd0;
             end else begin
-                // still accumulating within this window
-                OUT <= OUT;        // hold previous output
-                cnt <= cnt + 4'd1;
+                cyc9 <= cyc9 + 4'd1;
             end
         end
     end
-
 endmodule
